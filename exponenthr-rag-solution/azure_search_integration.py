@@ -23,7 +23,6 @@ from azure.search.documents.indexes.models import (
 from azure.search.documents.models import VectorizedQuery
 from azure.identity import DefaultAzureCredential
 from azure.core.credentials import AzureKeyCredential
-import openai
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -92,6 +91,7 @@ class AzureSearchIntegration:
         
         # OpenAI client for embeddings
         self.openai_client = None
+        self.use_azure_openai = False
         
         # Index configuration
         self.index_name = config.get('search_index_name', 'exponenthr-docs')
@@ -176,7 +176,7 @@ class AzureSearchIntegration:
                 
                 self.openai_client = AzureOpenAI(
                     api_key=azure_openai_key,
-                    api_version=self.config.get('azure_openai_api_version', '2023-05-15'),
+                    api_version=self.config.get('azure_openai_api_version', '2024-10-21'),
                     azure_endpoint=azure_openai_endpoint
                 )
                 
@@ -189,12 +189,13 @@ class AzureSearchIntegration:
                 
             else:
                 # Use regular OpenAI
-                import openai
+                openai_api_key = self.config.get('openai_api_key')
+                if not openai_api_key:
+                    raise ValueError("OpenAI API key not configured")
                 
-                openai.api_key = self.config.get('openai_api_key')
-                openai.api_base = self.config.get('openai_api_base', 'https://api.openai.com/v1')
-                
-                self.openai_client = openai
+                # For regular OpenAI, we'll use a simpler approach
+                from openai import OpenAI
+                self.openai_client = OpenAI(api_key=openai_api_key)
                 self.use_azure_openai = False
                 
                 self.logger.info("Initialized OpenAI client")
@@ -317,13 +318,21 @@ class AzureSearchIntegration:
             # Clean and truncate text if necessary
             cleaned_text = self._clean_text_for_embedding(text)
             
-            # Generate embedding using OpenAI
-            response = await openai.Embedding.acreate(
-                model=self.embedding_model,
-                input=cleaned_text
-            )
+            if self.use_azure_openai:
+                # Use Azure OpenAI client
+                response = self.openai_client.embeddings.create(
+                    model=self.embedding_model,
+                    input=cleaned_text
+                )
+                embedding = response.data[0].embedding
+            else:
+                # Use regular OpenAI client
+                response = self.openai_client.embeddings.create(
+                    model=self.embedding_model,
+                    input=cleaned_text
+                )
+                embedding = response.data[0].embedding
             
-            embedding = response['data'][0]['embedding']
             return embedding
             
         except Exception as e:
@@ -799,74 +808,3 @@ class AzureSearchIntegration:
         except Exception as e:
             self.logger.error(f"Error deleting document: {str(e)}")
             return False
-
-
-# Example usage and testing
-async def main():
-    """Example usage of the Azure Search integration"""
-    config = {
-        'azure_search_endpoint': 'https://your-search-service.search.windows.net',
-        'azure_search_key': 'your-search-key',
-        'search_index_name': 'exponenthr-docs-test',
-        'openai_api_key': 'your-openai-key',
-        'embedding_model': 'text-embedding-ada-002',
-        'embedding_dimension': 1536,
-        'search_top_k': 10,
-        'indexing_batch_size': 5
-    }
-    
-    search_integration = AzureSearchIntegration(config)
-    
-    try:
-        # Initialize clients
-        search_integration.initialize_clients()
-        
-        # Create search index
-        search_integration.create_search_index()
-        
-        # Example document data
-        test_documents = [
-            {
-                'url': 'https://example.com/edit_direct_deposit',
-                'title': 'Edit Direct Deposit',
-                'content': 'This page allows you to edit your direct deposit information. Click the Edit button to make changes.',
-                'metadata': {
-                    'content_type': 'procedure',
-                    'source_view': 'personal',
-                    'section_hierarchy': ['Personal', 'Banking', 'Direct Deposit'],
-                    'word_count': 20,
-                    'content_hash': 'abc123',
-                    'extraction_timestamp': datetime.now().isoformat(),
-                    'links': [],
-                    'images': []
-                }
-            }
-        ]
-        
-        # Index documents
-        indexing_result = await search_integration.index_documents_batch(test_documents)
-        print(f"Indexing result: {indexing_result.indexed_documents} documents indexed")
-        
-        # Wait for indexing to complete
-        await asyncio.sleep(5)
-        
-        # Search documents
-        search_results = await search_integration.search_documents(
-            "direct deposit", 
-            search_type='hybrid'
-        )
-        
-        print(f"Search results: {len(search_results)} documents found")
-        for result in search_results:
-            print(f"  - {result.title} (score: {result.score:.2f})")
-        
-        # Get index statistics
-        stats = search_integration.get_index_statistics()
-        print(f"Index statistics: {stats}")
-    
-    except Exception as e:
-        print(f"Error: {str(e)}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

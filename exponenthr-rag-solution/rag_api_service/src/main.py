@@ -6,15 +6,11 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# DON'T CHANGE THIS !!!
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-# Add parent directory to path for RAG components
+# Add parent directories to path for RAG components
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from flask import Flask, send_from_directory, request, jsonify
 from flask_cors import CORS
-from src.models.user import db
-from src.routes.user import user_bp
 
 # Import RAG system components
 try:
@@ -22,23 +18,17 @@ try:
     from azure_search_integration import AzureSearchIntegration
     from synchronization_service import SynchronizationService
     from change_detection import ChangeDetectionSystem
+    RAG_IMPORTS_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import RAG components: {e}")
     print("Make sure the RAG system files are in the parent directory")
+    RAG_IMPORTS_AVAILABLE = False
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'exponenthr-rag-secret-key-change-in-production'
 
 # Enable CORS for all routes
 CORS(app)
-
-# Register existing blueprints
-app.register_blueprint(user_bp, url_prefix='/api')
-
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db.init_app(app)
 
 # RAG system configuration - Updated for Azure OpenAI
 def get_rag_config():
@@ -88,11 +78,15 @@ search_integration = None
 sync_service = None
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Add startup logging
 logger.info("=== ExponentHR RAG API Starting ===")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Working directory: {os.getcwd()}")
+logger.info(f"Python path: {sys.path[:3]}...")  # First 3 entries
+logger.info(f"RAG imports available: {RAG_IMPORTS_AVAILABLE}")
 logger.info(f"Azure Storage URL: {RAG_CONFIG.get('azure_storage_account_url')}")
 logger.info(f"Azure Search Endpoint: {RAG_CONFIG.get('azure_search_endpoint')}")
 logger.info(f"Search Index Name: {RAG_CONFIG.get('search_index_name')}")
@@ -106,6 +100,9 @@ logger.info("=====================================")
 async def initialize_rag_system():
     """Initialize the RAG system components"""
     global rag_orchestrator, search_integration, sync_service
+    
+    if not RAG_IMPORTS_AVAILABLE:
+        raise Exception("RAG system components not available")
     
     try:
         logger.info("Initializing RAG system components...")
@@ -223,7 +220,7 @@ def trigger_full_sync():
         if not sync_service:
             return jsonify({'error': 'Sync service not initialized'}), 503
         
-        # Start synchronization in background
+        # Start synchronization
         result = run_async(sync_service.perform_full_synchronization(view_types))
         
         return jsonify({
@@ -377,7 +374,8 @@ def health_check():
             'configuration': {
                 'azure_openai_configured': RAG_CONFIG.get('use_azure_openai', False),
                 'search_configured': bool(RAG_CONFIG.get('azure_search_endpoint')),
-                'storage_configured': bool(RAG_CONFIG.get('azure_storage_account_url'))
+                'storage_configured': bool(RAG_CONFIG.get('azure_storage_account_url')),
+                'rag_imports_available': RAG_IMPORTS_AVAILABLE
             }
         }
         
@@ -399,33 +397,30 @@ def health_check():
         }), 500
 
 
-# Static file serving
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    static_folder_path = app.static_folder
-    if static_folder_path is None:
-        return "Static folder not configured", 404
+# Basic route for testing
+@app.route('/')
+def home():
+    """Basic home route"""
+    return jsonify({
+        'message': 'ExponentHR RAG API is running',
+        'timestamp': datetime.now().isoformat(),
+        'endpoints': {
+            'health': '/api/health',
+            'system_status': '/api/system/status',
+            'search': '/api/search (POST)',
+            'suggestions': '/api/suggest',
+            'full_sync': '/api/sync/full (POST)',
+            'incremental_sync': '/api/sync/incremental (POST)',
+            'sync_status': '/api/sync/status'
+        }
+    })
 
-    if path != "" and os.path.exists(os.path.join(static_folder_path, path)):
-        return send_from_directory(static_folder_path, path)
-    else:
-        index_path = os.path.join(static_folder_path, 'index.html')
-        if os.path.exists(index_path):
-            return send_from_directory(static_folder_path, 'index.html')
-        else:
-            return "index.html not found", 404
 
-
-# Initialize database and RAG system
-with app.app_context():
-    try:
-        db.create_all()
-        logger.info("Database initialized")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {str(e)}")
+# Initialize RAG system on startup
+try:
+    logger.info("Starting RAG system initialization...")
     
-    # Initialize RAG system if configuration is available
+    # Check required configuration
     required_config = [
         'azure_search_endpoint', 
         'azure_storage_account_url'
@@ -437,24 +432,42 @@ with app.app_context():
         (RAG_CONFIG.get('use_azure_openai') and RAG_CONFIG.get('azure_openai_api_key'))
     )
     
-    config_complete = all(RAG_CONFIG.get(key) for key in required_config) and has_openai_config
+    config_complete = all(RAG_CONFIG.get(key) for key in required_config) and has_openai_config and RAG_IMPORTS_AVAILABLE
     
     if config_complete:
-        try:
-            logger.info("Starting RAG system initialization...")
-            run_async(initialize_rag_system())
-            logger.info("RAG system initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize RAG system: {str(e)}")
-            logger.warning("API will run in limited mode without RAG functionality")
+        # Initialize in a separate thread to avoid blocking startup
+        import threading
+        
+        def init_rag():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(initialize_rag_system())
+                logger.info("RAG system initialized successfully in background")
+            except Exception as e:
+                logger.error(f"Failed to initialize RAG system in background: {str(e)}")
+        
+        init_thread = threading.Thread(target=init_rag, daemon=True)
+        init_thread.start()
+        logger.info("RAG system initialization started in background thread")
+        
     else:
-        missing_config = [key for key in required_config if not RAG_CONFIG.get(key)]
+        missing_config = []
+        if not all(RAG_CONFIG.get(key) for key in required_config):
+            missing_config.extend([key for key in required_config if not RAG_CONFIG.get(key)])
         if not has_openai_config:
             missing_config.append("OpenAI configuration")
+        if not RAG_IMPORTS_AVAILABLE:
+            missing_config.append("RAG system imports")
+            
         logger.warning(f"RAG system configuration incomplete. Missing: {missing_config}")
         logger.warning("Running in limited mode without RAG functionality.")
+
+except Exception as e:
+    logger.error(f"Error during startup: {str(e)}")
+    logger.warning("Running in limited mode")
 
 
 if __name__ == '__main__':
     logger.info("Starting Flask application...")
-    app.run(host='0.0.0.0', port=5000, debug=False)  # Set debug=False for production
+    app.run(host='0.0.0.0', port=5000, debug=False)

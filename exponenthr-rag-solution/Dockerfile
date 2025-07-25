@@ -40,9 +40,11 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
+COPY rag_api_service/requirements.txt rag_api_service/
 
-# Install Python dependencies
+# Install Python dependencies (both main and Flask API requirements)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r rag_api_service/requirements.txt
 
 # Install Playwright and browsers
 RUN playwright install chromium
