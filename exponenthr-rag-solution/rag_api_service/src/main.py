@@ -40,20 +40,47 @@ app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirnam
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
-# RAG system configuration
-RAG_CONFIG = {
-    'azure_storage_account_url': os.getenv('AZURE_STORAGE_ACCOUNT_URL'),
-    'azure_search_endpoint': os.getenv('AZURE_SEARCH_ENDPOINT'),
-    'azure_search_key': os.getenv('AZURE_SEARCH_KEY'),
-    'search_index_name': os.getenv('AZURE_SEARCH_INDEX_NAME', 'exponenthr-docs'),
-    'openai_api_key': os.getenv('OPENAI_API_KEY'),
-    'content_container': os.getenv('CONTENT_CONTAINER', 'scraped-content'),
-    'request_delay': float(os.getenv('REQUEST_DELAY', '1.0')),
-    'sync_batch_size': int(os.getenv('SYNC_BATCH_SIZE', '20')),
-    'search_top_k': int(os.getenv('SEARCH_TOP_K', '10')),
-    'embedding_model': os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002'),
-    'embedding_dimension': int(os.getenv('EMBEDDING_DIMENSION', '1536'))
-}
+# RAG system configuration - Updated for Azure OpenAI
+def get_rag_config():
+    """Get RAG configuration with Azure OpenAI support"""
+    config = {
+        'azure_storage_account_url': os.getenv('AZURE_STORAGE_ACCOUNT_URL'),
+        'azure_storage_key': os.getenv('AZURE_STORAGE_KEY'),
+        'azure_search_endpoint': os.getenv('AZURE_SEARCH_ENDPOINT'),
+        'azure_search_key': os.getenv('AZURE_SEARCH_KEY'),
+        'search_index_name': os.getenv('SEARCH_INDEX_NAME', 'exponenthr-docs'),
+        'content_container': os.getenv('CONTENT_CONTAINER', 'scraped-content'),
+        'request_delay': float(os.getenv('REQUEST_DELAY', '1.0')),
+        'sync_batch_size': int(os.getenv('SYNC_BATCH_SIZE', '20')),
+        'search_top_k': int(os.getenv('SEARCH_TOP_K', '10')),
+    }
+    
+    # Check if using Azure OpenAI
+    use_azure_openai = os.getenv('USE_AZURE_OPENAI', 'false').lower() == 'true'
+    
+    if use_azure_openai:
+        # Azure OpenAI configuration
+        config.update({
+            'use_azure_openai': True,
+            'azure_openai_endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'),
+            'azure_openai_api_key': os.getenv('AZURE_OPENAI_API_KEY'),
+            'azure_openai_deployment_name': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', 'text-embedding-3-large'),
+            'azure_openai_api_version': os.getenv('AZURE_OPENAI_API_VERSION', '2023-05-15'),
+            'embedding_model': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', 'text-embedding-3-large'),
+            'embedding_dimension': int(os.getenv('EMBEDDING_DIMENSION', '3072'))  # text-embedding-3-large default
+        })
+    else:
+        # Regular OpenAI configuration
+        config.update({
+            'use_azure_openai': False,
+            'openai_api_key': os.getenv('OPENAI_API_KEY'),
+            'embedding_model': os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002'),
+            'embedding_dimension': int(os.getenv('EMBEDDING_DIMENSION', '1536'))
+        })
+    
+    return config
+
+RAG_CONFIG = get_rag_config()
 
 # Global RAG system instances
 rag_orchestrator = None
@@ -63,6 +90,17 @@ sync_service = None
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add startup logging
+logger.info("=== ExponentHR RAG API Starting ===")
+logger.info(f"Azure Storage URL: {RAG_CONFIG.get('azure_storage_account_url')}")
+logger.info(f"Azure Search Endpoint: {RAG_CONFIG.get('azure_search_endpoint')}")
+logger.info(f"Search Index Name: {RAG_CONFIG.get('search_index_name')}")
+logger.info(f"Using Azure OpenAI: {RAG_CONFIG.get('use_azure_openai')}")
+if RAG_CONFIG.get('use_azure_openai'):
+    logger.info(f"Azure OpenAI Endpoint: {RAG_CONFIG.get('azure_openai_endpoint')}")
+    logger.info(f"Azure OpenAI Deployment: {RAG_CONFIG.get('azure_openai_deployment_name')}")
+logger.info("=====================================")
 
 
 async def initialize_rag_system():
@@ -75,19 +113,25 @@ async def initialize_rag_system():
         # Initialize search integration
         search_integration = AzureSearchIntegration(RAG_CONFIG)
         search_integration.initialize_clients()
+        logger.info("Search integration initialized")
         
         # Initialize orchestrator
         rag_orchestrator = RAGOrchestrator(RAG_CONFIG)
         await rag_orchestrator.initialize()
+        logger.info("RAG orchestrator initialized")
         
         # Initialize synchronization service
         sync_service = SynchronizationService(RAG_CONFIG)
         await sync_service.initialize()
+        logger.info("Synchronization service initialized")
         
         logger.info("RAG system initialized successfully")
         
     except Exception as e:
         logger.error(f"Failed to initialize RAG system: {str(e)}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
 
@@ -281,7 +325,9 @@ def get_system_status():
             'configuration': {
                 'search_index_name': RAG_CONFIG.get('search_index_name'),
                 'embedding_model': RAG_CONFIG.get('embedding_model'),
-                'search_top_k': RAG_CONFIG.get('search_top_k')
+                'search_top_k': RAG_CONFIG.get('search_top_k'),
+                'use_azure_openai': RAG_CONFIG.get('use_azure_openai', False),
+                'azure_openai_deployment': RAG_CONFIG.get('azure_openai_deployment_name') if RAG_CONFIG.get('use_azure_openai') else None
             }
         }
         
@@ -290,8 +336,8 @@ def get_system_status():
             try:
                 index_stats = search_integration.get_index_statistics()
                 status['index_statistics'] = index_stats
-            except:
-                status['index_statistics'] = {'error': 'Could not retrieve index statistics'}
+            except Exception as e:
+                status['index_statistics'] = {'error': f'Could not retrieve index statistics: {str(e)}'}
         
         # Get orchestrator status if available
         if rag_orchestrator:
@@ -305,8 +351,8 @@ def get_system_status():
                     'system_health': orchestrator_status.system_health,
                     'error_rate': orchestrator_status.error_rate
                 }
-            except:
-                status['orchestrator_status'] = {'error': 'Could not retrieve orchestrator status'}
+            except Exception as e:
+                status['orchestrator_status'] = {'error': f'Could not retrieve orchestrator status: {str(e)}'}
         
         return jsonify(status)
         
@@ -327,6 +373,11 @@ def health_check():
                 'search': search_integration is not None,
                 'orchestrator': rag_orchestrator is not None,
                 'sync': sync_service is not None
+            },
+            'configuration': {
+                'azure_openai_configured': RAG_CONFIG.get('use_azure_openai', False),
+                'search_configured': bool(RAG_CONFIG.get('azure_search_endpoint')),
+                'storage_configured': bool(RAG_CONFIG.get('azure_storage_account_url'))
             }
         }
         
@@ -368,19 +419,42 @@ def serve(path):
 
 # Initialize database and RAG system
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {str(e)}")
     
     # Initialize RAG system if configuration is available
-    if RAG_CONFIG.get('azure_search_endpoint') and RAG_CONFIG.get('openai_api_key'):
+    required_config = [
+        'azure_search_endpoint', 
+        'azure_storage_account_url'
+    ]
+    
+    # Check for OpenAI configuration (either regular or Azure)
+    has_openai_config = (
+        RAG_CONFIG.get('openai_api_key') or 
+        (RAG_CONFIG.get('use_azure_openai') and RAG_CONFIG.get('azure_openai_api_key'))
+    )
+    
+    config_complete = all(RAG_CONFIG.get(key) for key in required_config) and has_openai_config
+    
+    if config_complete:
         try:
+            logger.info("Starting RAG system initialization...")
             run_async(initialize_rag_system())
             logger.info("RAG system initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize RAG system: {str(e)}")
             logger.warning("API will run in limited mode without RAG functionality")
     else:
-        logger.warning("RAG system configuration incomplete. Running in limited mode.")
+        missing_config = [key for key in required_config if not RAG_CONFIG.get(key)]
+        if not has_openai_config:
+            missing_config.append("OpenAI configuration")
+        logger.warning(f"RAG system configuration incomplete. Missing: {missing_config}")
+        logger.warning("Running in limited mode without RAG functionality.")
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    logger.info("Starting Flask application...")
+    app.run(host='0.0.0.0', port=5000, debug=False)  # Set debug=False for production

@@ -53,10 +53,17 @@ COPY . .
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data
+RUN mkdir -p /app/rag_api_service/src/database
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=rag_api_service/src/main.py
+ENV FLASK_ENV=production
+
+# Create a simple startup script
+RUN echo '#!/bin/bash\ncd /app\npython rag_api_service/src/main.py' > /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Expose port
 EXPOSE 5000
@@ -65,5 +72,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 
-# Run the Flask application directly
-CMD ["python", "/app/rag_api_service/src/main.py"]
+# Use the startup script
+CMD ["/app/start.sh"]
