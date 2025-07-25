@@ -6,6 +6,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    curl \
     wget \
     gnupg \
     ca-certificates \
@@ -47,27 +48,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
-# Copy the application code
+# Copy all application files
 COPY . .
-
-# Copy RAG system files to the container
-COPY exponenthr_scraper.py .
-COPY content_discovery.py .
-COPY change_detection.py .
-COPY azure_search_integration.py .
-COPY synchronization_service.py .
-COPY rag_orchestrator.py .
-
-# Copy Flask API service
-COPY rag_api_service/ ./rag_api_service/
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV FLASK_APP=rag_api_service/src/main.py
-ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
@@ -77,20 +65,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-echo "Starting ExponentHR RAG Solution..."\n\
-\n\
-# Wait for dependencies to be ready\n\
-sleep 10\n\
-\n\
-# Start the Flask application\n\
-cd /app/rag_api_service\n\
-python src/main.py\n\
-' > /app/start.sh && chmod +x /app/start.sh
-
-# Run the application
-CMD ["/app/start.sh"]
-
+# Run the Flask application directly
+CMD ["python", "/app/rag_api_service/src/main.py"]
