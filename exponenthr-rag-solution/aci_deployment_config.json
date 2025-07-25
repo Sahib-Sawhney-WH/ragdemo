@@ -1,0 +1,41 @@
+{
+  "azure_subscription_id": "bd5e8f9a-0b6b-42c1-a950-0bc1baec724a",
+  "azure_resource_group": "exponenthr-rag-rg",
+  "azure_storage_account_name": "exponenthrragstorage",
+  "azure_search_service_name": "exponenthr-rag-search",
+  "azure_container_registry": "exponenthrragacr",
+  "azure_region": "East US",
+  "azure_search_sku": "basic",
+  
+  "container_name": "exponenthr-rag-container",
+  "container_cpu_cores": 2,
+  "container_memory_gb": 4,
+  "container_restart_policy": "Always",
+  
+  "search_index_name": "exponenthr-docs",
+  "embedding_model": "text-embedding-ada-002",
+  "embedding_dimension": 1536,
+  
+  "openai_api_key": "your-openai-api-key",
+  
+  "request_delay": 1.0,
+  "sync_batch_size": 20,
+  "incremental_update_hours": 6,
+  "full_scan_days": 7,
+  
+  "content_container": "scraped-content",
+  "chunk_size": 1000,
+  "chunk_overlap": 200,
+  
+  "search_top_k": 10,
+  "semantic_search_enabled": true,
+  "vector_search_enabled": true,
+  "hybrid_search_enabled": true,
+  
+  "indexing_batch_size": 10,
+  
+  "log_level": "INFO",
+  "metrics_enabled": true,
+  "health_check_interval": 300
+}
+
