@@ -130,51 +130,62 @@ class ContentDiscoveryService:
     async def discover_navigation_structure(self, page: Page, view_type: str) -> Dict:
         """
         Discover the complete navigation structure for a view.
-        
-        Args:
-            page: Playwright page instance
-            view_type: 'personal' or 'management'
-            
-        Returns:
-            Dictionary containing the navigation structure
         """
         self.logger.info(f"Discovering navigation structure for {view_type} view")
-        
+
         try:
             # Navigate to the base URL
             base_url = self.base_urls[view_type]
+            self.logger.info(f"Navigating to base URL: {base_url}") # ADD THIS LINE
+
+            try:
+                await page.goto(base_url, wait_until='networkidle')
+            except PlaywrightTimeoutError:
+                self.logger.error(f"FATAL: Playwright timed out while trying to navigate to {base_url}.")
+                self.logger.error("This could be a network issue or the site is blocking the container.")
+                raise # Re-raise the exception to stop the process
+            
+            await page.wait_for_timeout(3000)
+            self.logger.info("Navigation successful. Expanding sections...")
             await page.goto(base_url, wait_until='networkidle')
             await page.wait_for_timeout(3000)
-            
+            self.logger.info("Navigation successful. Expanding sections...") # ADD THIS LINE
+
             # Expand all navigation sections
             await self._expand_all_sections(page)
-            
+            self.logger.info("Section expansion complete. Extracting hierarchy...") # ADD THIS LINE
+
             # Extract navigation hierarchy
             navigation_structure = await self._extract_navigation_hierarchy(page, view_type)
-            
+            self.logger.info("Hierarchy extraction complete. Analyzing patterns...") # ADD THIS LINE
+
             # Analyze URL patterns
             patterns = self._analyze_url_patterns(navigation_structure)
             self.discovered_patterns.extend(patterns)
-            
+
             # Build content map
             self._build_content_map(navigation_structure, view_type)
-            
+            self.logger.info("Content map built. Discovery finished.") # ADD THIS LINE
+
             return navigation_structure
-            
+
         except Exception as e:
             self.logger.error(f"Error discovering navigation structure: {str(e)}")
             raise
-    
+
     async def _expand_all_sections(self, page: Page) -> None:
         """Expand all collapsible sections in the navigation"""
         try:
+            self.logger.info("Attempting to find and click the main 'Expand All' button.") # ADD THIS LINE
             # Click expand/collapse all button if available
             expand_buttons = await page.query_selector_all('a[title*="Expand"], button[title*="Expand"]')
-            for button in expand_buttons:
+            for i, button in enumerate(expand_buttons):
                 try:
+                    self.logger.info(f"Clicking main expand button #{i+1}") # ADD THIS LINE
                     await button.click()
                     await page.wait_for_timeout(1000)
                 except:
+                    self.logger.warning(f"Could not click main expand button #{i+1}") # ADD THIS LINE
                     continue
             
             # Find and expand individual collapsible elements

@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse, unquote
 from dataclasses import dataclass, asdict
 
 from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
 import requests
 from azure.storage.blob import BlobServiceClient
@@ -123,8 +124,8 @@ class ExponentHRScraper:
             await self.page.set_viewport_size({"width": 1920, "height": 1080})
             
             # Set reasonable timeouts
-            self.page.set_default_timeout(30000)  # 30 seconds
-            self.page.set_default_navigation_timeout(60000)  # 60 seconds
+            self.page.set_default_timeout(60000)  # 60 seconds for general actions
+            self.page.set_default_navigation_timeout(120000)  # 2 minutes for page navigation
             
             self.logger.info("Browser initialized successfully")
             
